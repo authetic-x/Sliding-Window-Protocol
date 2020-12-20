@@ -15,6 +15,8 @@
 
 #define MAX_COMMAND_LENGTH 16
 #define AUTOMATED_FILENAME 512
+#define SWS 8
+#define RWS 8
 typedef unsigned char uchar_t;
 
 //System configuration information
@@ -57,6 +59,12 @@ typedef struct LLnode_t LLnode;
 
 
 //Receiver and sender data structures
+struct ReceiverWindow_t {
+  char full;
+  int seqNum;
+  void * msg;
+};
+
 struct Receiver_t
 {
     //DO NOT CHANGE:
@@ -67,8 +75,19 @@ struct Receiver_t
     pthread_mutex_t buffer_mutex;
     pthread_cond_t buffer_cv;
     LLnode * input_framelist_head;
-    
+
     int recv_id;
+
+    struct ReceiverWindow_t receiverWindow[RWS];
+    int windowSize;
+    unsigned char LMargin;
+};
+
+struct SenderWindow_t {
+  char full;
+  int seqNum;
+  struct timeval * timeout;
+  void * msg
 };
 
 struct Sender_t
@@ -84,6 +103,11 @@ struct Sender_t
     LLnode * input_cmdlist_head;
     LLnode * input_framelist_head;
     int send_id;
+
+    char seqNum;
+    struct SenderWindow_t sendWindow[SWS];
+    int windowSize;
+    unsigned char LMargin;
 };
 
 enum SendFrame_DstType 
@@ -96,14 +120,18 @@ typedef struct Sender_t Sender;
 typedef struct Receiver_t Receiver;
 
 
-#define MAX_FRAME_SIZE 48
+#define MAX_FRAME_SIZE 64
 
 //TODO: You should change this!
 //Remember, your frame can be AT MOST 48 bytes!
 #define FRAME_PAYLOAD_SIZE 48
 struct Frame_t 
 {
-    char data[FRAME_PAYLOAD_SIZE];
+  uint16_t src_id;
+  uint16_t dst_id;
+  unsigned char seqNum;
+  unsigned char CRC;
+  char data[FRAME_PAYLOAD_SIZE];
 };
 typedef struct Frame_t Frame;
 

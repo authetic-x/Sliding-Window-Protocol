@@ -5,6 +5,14 @@ void init_receiver(Receiver * receiver,
 {
     receiver->recv_id = id;
     receiver->input_framelist_head = NULL;
+
+    // 初始化窗口相关数据
+    receiver->windowSize = 0;
+    receiver->LMargin = 0;
+    for (int i = 0; i < RWS; i ++ ) {
+      receiver->receiverWindow[i].full = 0;
+      receiver->receiverWindow[i].seqNum = 0;
+    }
 }
 
 
@@ -31,12 +39,77 @@ void handle_incoming_msgs(Receiver * receiver,
         //                    Is this message corrupted?
         //                    Is this an old, retransmitted message?           
         char * raw_char_buf = (char *) ll_inmsg_node->value;
+        //TODO: CRC judge if frame corrupt?
+
         Frame * inframe = convert_char_to_frame(raw_char_buf);
-        
         //Free raw_char_buf
         free(raw_char_buf);
         
-        printf("<RECV_%d>:[%s]\n", receiver->recv_id, inframe->data);
+        //printf("<RECV_%d>:[%s]\n", receiver->recv_id, inframe->data);
+        if (receiver->recv_id == inframe->dst_id) {
+          int LMargin = receiver->LMargin;
+          int seqNum = inframe->seqNum;
+          unsigned char RMargin = LMargin + RWS - 1;
+
+          if (LMargin == seqNum) {
+            printf("<RECV_%d>:[%s]\n", receiver->recv_id, inframe->data);
+            
+            inframe->seqNum++;
+            char *buffer = convert_frame_to_char(inframe);
+            //TODO: add crc
+            ll_append_node(outgoing_frames_head_ptr, buffer);
+            free(buffer);
+            if (receiver->receiverWindow[0].full) {
+              receiver->receiverWindow[0].full = 0;
+            }
+            receiver->LMargin++;
+            for (int i = 0; i < RWS; i ++ ) {
+              if (receiver->receiverWindow[i].full && 
+                  receiver->receiverWindow[i].seqNum == receiver->LMargin) {
+                    receiver->LMargin++;
+                    receiver->windowSize--;
+                    Frame *frame = (Frame*)receiver->receiverWindow[i].msg;
+                    printf("<RECV_%d>:[%s]\n", receiver->recv_id, frame->data);
+                    // ack
+                    char *buffer = convert_frame_to_char(frame);
+                    //TODO: add crc
+                    ll_append_node(outgoing_frames_head_ptr, buffer);
+
+                  }
+            }
+          } else if (
+            ((LMargin < RMargin) && (seqNum > LMargin) && (seqNum < RMargin)) ||
+            ((LMargin > RMargin) && ((seqNum > LMargin) || (seqNum < RMargin)))
+          ) {
+            int isReplicated = 0;
+            // 判断包是否已缓存
+            for (int i = 0; i < RWS; i ++ ) {
+              if (receiver->receiverWindow[i].full && receiver->receiverWindow[i].seqNum == seqNum) {
+                isReplicated = 1;
+                break;
+              }
+            }
+            if (!isReplicated) {
+              for (int i = 0; i < RWS; i ++ ) {
+                if (receiver->receiverWindow[i].full == 0) {
+                  receiver->receiverWindow[i].full = 1;
+                  receiver->windowSize++;
+                  receiver->receiverWindow[i].seqNum = seqNum;
+                  receiver->receiverWindow[i].msg = (Frame*)malloc(MAX_FRAME_SIZE);
+                  memcpy(receiver->receiverWindow[i].msg, inframe, MAX_FRAME_SIZE);
+                  break;
+                }
+              }
+            }
+          } else {
+            // 不在区间内直接传回确认
+            inframe->seqNum = receiver->LMargin;
+            char *buffer = convert_frame_to_char(inframe);
+            //TODO: add crc
+            ll_append_node(outgoing_frames_head_ptr, buffer);
+            free(buffer);
+          }
+        }
 
         free(inframe);
         free(ll_inmsg_node);

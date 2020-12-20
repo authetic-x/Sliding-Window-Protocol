@@ -145,3 +145,21 @@ Frame * convert_char_to_frame(char * char_buf)
            sizeof(char)*sizeof(frame->data));
     return frame;
 }
+
+// 判断序列号是否在指定区间的辅助函数
+int judegeArea(char target, char L, char R) {
+  return (
+    (L < R && L <= target && target <= R) ||
+    (L > R && (target >= L || target <= R))
+  );
+}
+
+// 设置超时时间
+void setTimeout(struct timeval * timeout) {
+  gettimeofday(timeout, NULL);
+  timeout->tv_usec += 100000;
+  if (timeout->tv_usec >= 1000000) {
+    timeout->tv_usec -= 1000000;
+    timeout->tv_sec += 1;
+  }
+}

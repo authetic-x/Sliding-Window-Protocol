@@ -6,6 +6,13 @@ void init_sender(Sender * sender, int id)
     sender->send_id = id;
     sender->input_cmdlist_head = NULL;
     sender->input_framelist_head = NULL;
+
+    sender->seqNum = 0;
+    sender->LMargin = 0;
+    sender->windowSize = 0;
+    for (int i = 0; i < SWS; i ++ ) {
+      sender->sendWindow[i].full = 0;
+    }
 }
 
 struct timeval * sender_get_next_expiring_timeval(Sender * sender)
@@ -18,12 +25,39 @@ struct timeval * sender_get_next_expiring_timeval(Sender * sender)
 void handle_incoming_acks(Sender * sender,
                           LLnode ** outgoing_frames_head_ptr)
 {
-    //TODO: Suggested steps for handling incoming ACKs
-    //    1) Dequeue the ACK from the sender->input_framelist_head
-    //    2) Convert the char * buffer to a Frame data type
-    //    3) Check whether the frame is corrupted
-    //    4) Check whether the frame is for this sender
-    //    5) Do sliding window protocol for sender/receiver pair   
+  //TODO: Suggested steps for handling incoming ACKs
+  //    1) Dequeue the ACK from the sender->input_framelist_head
+  //    2) Convert the char * buffer to a Frame data type
+  //    3) Check whether the frame is corrupted
+  //    4) Check whether the frame is for this sender
+  //    5) Do sliding window protocol for sender/receiver pair
+  int incoming_ack_length = ll_get_length(sender->input_framelist_head);
+  while(incoming_ack_length > 0) {
+    LLnode * ll_ack_node = ll_pop_node(&sender->input_framelist_head);
+    incoming_ack_length = ll_get_length(sender->input_framelist_head);
+    char * raw_char_buff = (char*)ll_ack_node->value;
+    //TODO: check crc
+    Frame * ackFrame = convert_frame_to_char(raw_char_buff);
+    free(raw_char_buff);
+    free(ll_ack_node);
+    if (sender->send_id == ackFrame->src_id) {
+      if (!judegeArea(ackFrame->src_id, sender->LMargin, sender->seqNum)) break;
+
+      while (ackFrame->seqNum != sender->LMargin) {
+        for (int i = 0; i < SWS; i ++ ) {
+          if (sender->sendWindow[i].full) {
+            Frame * frame = (Frame*)sender->sendWindow[i].msg;
+            if (frame->seqNum == sender->LMargin) {
+              sender->sendWindow[i].full = 0;
+            }
+            free(frame);
+          }
+        }
+        sender->LMargin++;
+      }
+    }
+    free(ackFrame);
+  }
 }
 
 
@@ -41,44 +75,59 @@ void handle_input_cmds(Sender * sender,
         
     //Recheck the command queue length to see if stdin_thread dumped a command on us
     input_cmd_length = ll_get_length(sender->input_cmdlist_head);
-    while (input_cmd_length > 0)
+    while (input_cmd_length > 0 && sender->windowSize < SWS)
     {
-        //Pop a node off and update the input_cmd_length
-        LLnode * ll_input_cmd_node = ll_pop_node(&sender->input_cmdlist_head);
-        input_cmd_length = ll_get_length(sender->input_cmdlist_head);
+      unsigned char RMargin = sender->LMargin + SWS - 1;
+      if (judegeArea(sender->seqNum, sender->LMargin, RMargin))
+        break;
+      //Pop a node off and update the input_cmd_length
+      LLnode * ll_input_cmd_node = ll_pop_node(&sender->input_cmdlist_head);
+      input_cmd_length = ll_get_length(sender->input_cmdlist_head);
 
-        //Cast to Cmd type and free up the memory for the node
-        Cmd * outgoing_cmd = (Cmd *) ll_input_cmd_node->value;
-        free(ll_input_cmd_node);
-            
+      //Cast to Cmd type and free up the memory for the node
+      Cmd * outgoing_cmd = (Cmd *) ll_input_cmd_node->value;
+      free(ll_input_cmd_node);
+          
 
-        //DUMMY CODE: Add the raw char buf to the outgoing_frames list
-        //NOTE: You should not blindly send this message out!
-        //      Ask yourself: Is this message actually going to the right receiver (recall that default behavior of send is to broadcast to all receivers)?
-        //                    Does the receiver have enough space in in it's input queue to handle this message?
-        //                    Were the previous messages sent to this receiver ACTUALLY delivered to the receiver?
-        int msg_length = strlen(outgoing_cmd->message);
-        if (msg_length > MAX_FRAME_SIZE)
-        {
-            //Do something about messages that exceed the frame size
-            printf("<SEND_%d>: sending messages of length greater than %d is not implemented\n", sender->send_id, MAX_FRAME_SIZE);
-        }
-        else
-        {
-            //This is probably ONLY one step you want
-            Frame * outgoing_frame = (Frame *) malloc (sizeof(Frame));
-            strcpy(outgoing_frame->data, outgoing_cmd->message);
+      //DUMMY CODE: Add the raw char buf to the outgoing_frames list
+      //NOTE: You should not blindly send this message out!
+      //      Ask yourself: Is this message actually going to the right receiver (recall that default behavior of send is to broadcast to all receivers)?
+      //                    Does the receiver have enough space in in it's input queue to handle this message?
+      //                    Were the previous messages sent to this receiver ACTUALLY delivered to the receiver?
+      int msg_length = strlen(outgoing_cmd->message);
+      if (msg_length > MAX_FRAME_SIZE)
+      {
+          //TODO: Do something about messages that exceed the frame size
+          printf("<SEND_%d>: sending messages of length greater than %d is not implemented\n", sender->send_id, MAX_FRAME_SIZE);
+      }
+      else
+      {
+          Frame * outgoing_frame = (Frame *) malloc (sizeof(Frame));
+          strcpy(outgoing_frame->data, outgoing_cmd->message);
+          outgoing_frame->src_id = outgoing_cmd->src_id;
+          outgoing_frame->dst_id = outgoing_cmd->dst_id;
+          outgoing_frame->seqNum = sender->seqNum;
+          sender->seqNum++;
+          free(outgoing_cmd->message);
+          free(outgoing_cmd);
 
-            //At this point, we don't need the outgoing_cmd
-            free(outgoing_cmd->message);
-            free(outgoing_cmd);
-
-            //Convert the message to the outgoing_charbuf
-            char * outgoing_charbuf = convert_frame_to_char(outgoing_frame);
-            ll_append_node(outgoing_frames_head_ptr,
-                           outgoing_charbuf);
-            free(outgoing_frame);
-        }
+          char * outgoing_charbuf = convert_frame_to_char(outgoing_frame);
+          //TODO: add crc
+          ll_append_node(outgoing_frames_head_ptr,
+                          outgoing_charbuf);
+          for (int i = 0; i < SWS; i ++ ) {
+            if (sender->sendWindow[i].full == 0) {
+              sender->sendWindow[i].full = 1;
+              struct timeval * timeout = malloc(sizeof(struct timeval));
+              setTimeout(timeout);
+              sender->sendWindow[i].timeout = timeout;
+              sender->sendWindow[i].msg = (Frame*)malloc(MAX_FRAME_SIZE);
+              memcpy(sender->sendWindow[i].msg, outgoing_frame, MAX_FRAME_SIZE);
+              break;
+            }
+          }
+          free(outgoing_frame);
+      }
     }   
 }
 
@@ -90,6 +139,20 @@ void handle_timedout_frames(Sender * sender,
     //    1) Iterate through the sliding window protocol information you maintain for each receiver
     //    2) Locate frames that are timed out and add them to the outgoing frames
     //    3) Update the next timeout field on the outgoing frames
+    struct timeval * currentTime = malloc(sizeof(struct timeval));
+    for (int i = 0; i < SWS; i++ ) {
+      if (sender->sendWindow[i].full) {
+        long timeDiff = timeval_usecdiff(currentTime, sender->sendWindow[i].timeout);
+        if (timeDiff < 0) {
+          Frame * outgoing_frame = (Frame*)sender->sendWindow[i].msg;
+          char * buffer = convert_frame_to_char(outgoing_frame);
+          free(outgoing_frame);
+          //TODO: add crc
+          ll_append_node(outgoing_frames_head_ptr, buffer);
+          setTimeout(sender->sendWindow[i].timeout);
+        }
+      }
+    }
 }
 
 
