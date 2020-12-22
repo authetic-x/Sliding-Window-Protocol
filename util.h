@@ -32,4 +32,7 @@ char * convert_frame_to_char(Frame *);
 Frame * convert_char_to_frame(char *);
 int judegeArea(char, char, char);
 void setTimeout(struct timeval *);
+void append_crc(char *, int);
+int is_corrupted(char *, int);
+void ll_split_head(LLnode **, int);
 #endif

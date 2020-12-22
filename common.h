@@ -124,7 +124,7 @@ typedef struct Receiver_t Receiver;
 
 //TODO: You should change this!
 //Remember, your frame can be AT MOST 48 bytes!
-#define FRAME_PAYLOAD_SIZE 48
+#define FRAME_PAYLOAD_SIZE 58
 struct Frame_t 
 {
   uint16_t src_id;

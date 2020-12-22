@@ -19,101 +19,79 @@ void init_receiver(Receiver * receiver,
 void handle_incoming_msgs(Receiver * receiver,
                           LLnode ** outgoing_frames_head_ptr)
 {
-    //TODO: Suggested steps for handling incoming frames
-    //    1) Dequeue the Frame from the sender->input_framelist_head
-    //    2) Convert the char * buffer to a Frame data type
-    //    3) Check whether the frame is corrupted
-    //    4) Check whether the frame is for this receiver
-    //    5) Do sliding window protocol for sender/receiver pair
+  int incoming_msgs_length = ll_get_length(receiver->input_framelist_head);
+  while (incoming_msgs_length > 0)
+  {
+    //Pop a node off the front of the link list and update the count
+    LLnode * ll_inmsg_node = ll_pop_node(&receiver->input_framelist_head);
+    incoming_msgs_length = ll_get_length(receiver->input_framelist_head);
+      
+    char * raw_char_buf = (char *) ll_inmsg_node->value;
+    if (!is_corrupted(raw_char_buf, MAX_FRAME_SIZE)) continue;
+    Frame * inframe = convert_char_to_frame(raw_char_buf);
 
-    int incoming_msgs_length = ll_get_length(receiver->input_framelist_head);
-    while (incoming_msgs_length > 0)
-    {
-        //Pop a node off the front of the link list and update the count
-        LLnode * ll_inmsg_node = ll_pop_node(&receiver->input_framelist_head);
-        incoming_msgs_length = ll_get_length(receiver->input_framelist_head);
+    if (receiver->recv_id == inframe->dst_id) {
+      int LMargin = receiver->LMargin;
+      int seqNum = inframe->seqNum;
+      unsigned char RMargin = LMargin + RWS - 1;
+      
+      if (LMargin == seqNum) {
+        printf("<RECV_%d>:[%s]\n", receiver->recv_id, inframe->data);
 
-        //DUMMY CODE: Print the raw_char_buf
-        //NOTE: You should not blindly print messages!
-        //      Ask yourself: Is this message really for me?
-        //                    Is this message corrupted?
-        //                    Is this an old, retransmitted message?           
-        char * raw_char_buf = (char *) ll_inmsg_node->value;
-        //TODO: CRC judge if frame corrupt?
-
-        Frame * inframe = convert_char_to_frame(raw_char_buf);
-        //Free raw_char_buf
-        free(raw_char_buf);
-        
-        //printf("<RECV_%d>:[%s]\n", receiver->recv_id, inframe->data);
-        if (receiver->recv_id == inframe->dst_id) {
-          int LMargin = receiver->LMargin;
-          int seqNum = inframe->seqNum;
-          unsigned char RMargin = LMargin + RWS - 1;
-
-          if (LMargin == seqNum) {
-            printf("<RECV_%d>:[%s]\n", receiver->recv_id, inframe->data);
-            
-            inframe->seqNum++;
-            char *buffer = convert_frame_to_char(inframe);
-            //TODO: add crc
-            ll_append_node(outgoing_frames_head_ptr, buffer);
-            free(buffer);
-            if (receiver->receiverWindow[0].full) {
-              receiver->receiverWindow[0].full = 0;
+        inframe->seqNum++;
+        char *buffer = convert_frame_to_char(inframe);
+        append_crc(buffer, MAX_FRAME_SIZE);
+        ll_append_node(outgoing_frames_head_ptr, buffer);
+        receiver->LMargin++;
+        for (int i = 0; i < RWS; i ++ ) {
+          if (receiver->receiverWindow[i].full == 1 && 
+              receiver->receiverWindow[i].seqNum == receiver->LMargin) {
+                receiver->LMargin++;
+                receiver->receiverWindow[i].full = 0;
+                receiver->windowSize--;
+                Frame *frame = (Frame*)receiver->receiverWindow[i].msg;
+                //frame->seqNum++;
+                printf("<RECV_%d>:[%s]\n", receiver->recv_id, frame->data);
+                // ack
+                char *buffer = convert_frame_to_char(frame);
+                append_crc(buffer, MAX_FRAME_SIZE);
+                ll_append_node(outgoing_frames_head_ptr, buffer);
+              }
+        }
+      } else if (judegeArea(seqNum, LMargin, RMargin)) {
+          int isReplicated = 0;
+          // 判断包是否已缓存
+          for (int i = 0; i < RWS; i ++ ) {
+            if (receiver->receiverWindow[i].full && receiver->receiverWindow[i].seqNum == seqNum) {
+              isReplicated = 1;
+              break;
             }
-            receiver->LMargin++;
+          }
+          if (!isReplicated) {
             for (int i = 0; i < RWS; i ++ ) {
-              if (receiver->receiverWindow[i].full && 
-                  receiver->receiverWindow[i].seqNum == receiver->LMargin) {
-                    receiver->LMargin++;
-                    receiver->windowSize--;
-                    Frame *frame = (Frame*)receiver->receiverWindow[i].msg;
-                    printf("<RECV_%d>:[%s]\n", receiver->recv_id, frame->data);
-                    // ack
-                    char *buffer = convert_frame_to_char(frame);
-                    //TODO: add crc
-                    ll_append_node(outgoing_frames_head_ptr, buffer);
-
-                  }
-            }
-          } else if (
-            ((LMargin < RMargin) && (seqNum > LMargin) && (seqNum < RMargin)) ||
-            ((LMargin > RMargin) && ((seqNum > LMargin) || (seqNum < RMargin)))
-          ) {
-            int isReplicated = 0;
-            // 判断包是否已缓存
-            for (int i = 0; i < RWS; i ++ ) {
-              if (receiver->receiverWindow[i].full && receiver->receiverWindow[i].seqNum == seqNum) {
-                isReplicated = 1;
+              if (receiver->receiverWindow[i].full == 0) {
+                receiver->receiverWindow[i].full = 1;
+                receiver->windowSize++;
+                receiver->receiverWindow[i].seqNum = seqNum;
+                receiver->receiverWindow[i].msg = (Frame*)malloc(MAX_FRAME_SIZE);
+                memcpy(receiver->receiverWindow[i].msg, inframe, MAX_FRAME_SIZE);
                 break;
               }
             }
-            if (!isReplicated) {
-              for (int i = 0; i < RWS; i ++ ) {
-                if (receiver->receiverWindow[i].full == 0) {
-                  receiver->receiverWindow[i].full = 1;
-                  receiver->windowSize++;
-                  receiver->receiverWindow[i].seqNum = seqNum;
-                  receiver->receiverWindow[i].msg = (Frame*)malloc(MAX_FRAME_SIZE);
-                  memcpy(receiver->receiverWindow[i].msg, inframe, MAX_FRAME_SIZE);
-                  break;
-                }
-              }
-            }
-          } else {
-            // 不在区间内直接传回确认
-            inframe->seqNum = receiver->LMargin;
-            char *buffer = convert_frame_to_char(inframe);
-            //TODO: add crc
-            ll_append_node(outgoing_frames_head_ptr, buffer);
-            free(buffer);
           }
-        }
-
-        free(inframe);
-        free(ll_inmsg_node);
+      } else {
+        // 不在区间内直接传回确认
+        inframe->seqNum = receiver->LMargin;
+        char *buffer = convert_frame_to_char(inframe);
+        append_crc(buffer, MAX_FRAME_SIZE);
+        ll_append_node(outgoing_frames_head_ptr, buffer);
+      }
     }
+
+    free(raw_char_buf);
+    free(inframe);
+    free(ll_inmsg_node);
+  }
 }
 
 void * run_receiver(void * input_receiver)

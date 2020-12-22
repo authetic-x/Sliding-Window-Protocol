@@ -121,15 +121,15 @@ void print_cmd(Cmd * cmd)
 
 char * convert_frame_to_char(Frame * frame)
 {
-    //TODO: You should implement this as necessary
-    char * char_buffer = (char *) malloc(MAX_FRAME_SIZE);
-    memset(char_buffer,
-           0,
-           MAX_FRAME_SIZE);
-    memcpy(char_buffer, 
-           frame->data,
-           FRAME_PAYLOAD_SIZE);
-    return char_buffer;
+  //TODO: You should implement this as necessary
+  char * char_buffer = (char *) malloc(MAX_FRAME_SIZE);
+  memset(char_buffer,
+          0,
+          MAX_FRAME_SIZE);
+  memcpy(char_buffer, 
+          frame,
+          MAX_FRAME_SIZE);
+  return char_buffer;
 }
 
 
@@ -137,12 +137,12 @@ Frame * convert_char_to_frame(char * char_buf)
 {
     //TODO: You should implement this as necessary
     Frame * frame = (Frame *) malloc(sizeof(Frame));
-    memset(frame->data,
+    memset(frame,
            0,
-           sizeof(char)*sizeof(frame->data));
-    memcpy(frame->data, 
+           MAX_FRAME_SIZE);
+    memcpy(frame, 
            char_buf,
-           sizeof(char)*sizeof(frame->data));
+           MAX_FRAME_SIZE);
     return frame;
 }
 
@@ -162,4 +162,75 @@ void setTimeout(struct timeval * timeout) {
     timeout->tv_usec -= 1000000;
     timeout->tv_sec += 1;
   }
+}
+
+//crc
+char get_bit (char byte, int pos) {
+  char temp = byte >> pos;
+  if ((temp & 0x01) == 0)
+    return 0;
+  else
+    return 1;
+}
+
+char crc8(char * array, int array_len) {
+  char poly = 0x07;
+  char crc = array[0];
+  int i, j;
+  for (i = 1; i < array_len; i++) {
+    char next_byte = array[i];
+    for (j = 7; j >= 0; j--) {
+      if ((crc & 0x80) == 0) {
+        crc = crc << 1;
+        crc = crc | get_bit(next_byte, j);
+      }
+      else {
+        crc = crc << 1;
+        crc = crc | get_bit(next_byte, j);
+        crc = crc ^ poly;
+      }
+    }
+  }
+  return crc;
+}
+
+void append_crc(char * array, int array_len) {
+  array[array_len-1] = 0x00;
+  char crc = crc8(array, array_len);
+  array[array_len-1] = array[array_len-1] ^ crc;
+}
+
+int is_corrupted(char * array, int array_len) {
+  char crc = crc8(array, array_len);
+  if (crc == 0)
+    return 1;
+  else
+    return 0;
+}
+
+void ll_split_head(LLnode ** head_ptr, int payload_size) {
+    if (head_ptr == NULL || *head_ptr == NULL) {
+        return;
+    }
+    LLnode* head = *head_ptr;
+    Cmd* head_cmd = (Cmd*) head->value;
+    char * msg = head_cmd -> message;
+    if (strlen(msg) < payload_size) {
+        return;
+    }
+    int i;
+    Cmd * next_cmd;
+    for (i = payload_size; i < strlen(msg); i += payload_size) {
+        //next = (LLnode*) malloc(sizeof (LLnode));
+        next_cmd = (Cmd *) malloc(sizeof(Cmd));
+        char * cmd_msg = (char *) malloc((payload_size + 1) * sizeof(char));
+        memset(cmd_msg, 0, (payload_size + 1) * sizeof(char));
+        strncpy(cmd_msg, msg + i, payload_size);
+        //fprintf(stderr, "MSG = %s\n", cmd_msg);
+        next_cmd->src_id = head_cmd->src_id;
+        next_cmd->dst_id = head_cmd->dst_id;
+        next_cmd->message = cmd_msg;
+        ll_append_node(head_ptr, next_cmd);
+    }
+    msg[payload_size] = '\0';
 }
